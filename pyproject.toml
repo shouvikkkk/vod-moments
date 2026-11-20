@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vod-moments"
+version = "0.1.0"
+description = "Find the funny moments in a long GTA 6 stream without rewatching it — free, offline, from captions or sound"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "Shouvik Maji"}]
+
+[project.scripts]
+vod-moments = "vodmoments.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vodmoments*"]
