@@ -77,6 +77,7 @@ class Moment:
     quote: str = ""  # the first line a viewer hears in the moment
     spoiler_hint: bool = False
     source: str = "transcript"  # "transcript" | "audio" | "both"
+    clip: str = ""  # path of the cut clip file, once --cut has made it
 
 
 def _count_phrases(text: str, phrases: set[str]) -> int:
