@@ -50,6 +50,12 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(len(merged), 2)
         self.assertLess(merged[0].start, merged[1].start)
 
+    def test_empty_transcript_list_keeps_audio_moments(self):
+        # Audio-only mode merges against an empty transcript list.
+        merged = merge_moments([], [_moment(60, 70, "audio")], top=5)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].source, "audio")
+
 
 if __name__ == "__main__":
     unittest.main()
