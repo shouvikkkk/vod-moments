@@ -4,7 +4,12 @@ Usage (the whole tool is one command):
 
     python -m vodmoments find stream.srt
     python -m vodmoments find stream.srt --audio stream.mp4 --top 15
+    python -m vodmoments find --audio stream.mp4 --cut
     python -m vodmoments find stream.vtt --format json --out moments.json
+
+No captions?  ``find --audio stream.mp4`` works on sound alone — the
+transcript is optional whenever ``--audio`` is given.  Add ``--cut`` to
+actually cut the clips out of the video instead of just listing them.
 
 Exit codes: 0 = moments found, 1 = no moments found (the stream was
 quiet), 2 = bad usage or unreadable transcript, 3 = audio problem
@@ -21,6 +26,7 @@ import sys
 
 from . import __version__
 from .audio import AudioError, find_audio_moments
+from .cut import CutError, cut_clips
 from .merge import merge_moments
 from .parse import ParseError, parse_transcript
 from .score import Moment, find_transcript_moments
@@ -51,9 +57,12 @@ def render_text(moments: list[Moment], source: str, media: str | None) -> str:
         )
         if moment.quote:
             lines.append(f'   "{moment.quote}"')
-        cut = _ffmpeg_cut(moment, media)
-        if cut:
-            lines.append(f"   {cut}")
+        if moment.clip:
+            lines.append(f"   → {moment.clip}")
+        else:
+            cut = _ffmpeg_cut(moment, media)
+            if cut:
+                lines.append(f"   {cut}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -72,6 +81,7 @@ def render_json(moments: list[Moment], source: str) -> str:
                 "quote": m.quote,
                 "spoiler_hint": m.spoiler_hint,
                 "signal": m.source,
+                "clip": m.clip or None,
             }
             for m in moments
         ],
@@ -82,7 +92,7 @@ def render_json(moments: list[Moment], source: str) -> str:
 def render_csv(moments: list[Moment]) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["start", "end", "score", "reasons", "quote", "spoiler_hint", "signal"])
+    writer.writerow(["start", "end", "score", "reasons", "quote", "spoiler_hint", "signal", "clip"])
     for m in moments:
         writer.writerow([
             _fmt_time(m.start),
@@ -92,6 +102,7 @@ def render_csv(moments: list[Moment]) -> str:
             m.quote,
             "yes" if m.spoiler_hint else "no",
             m.source,
+            m.clip,
         ])
     return buffer.getvalue()
 
@@ -102,16 +113,22 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Find the funny moments in a long stream without rewatching it. "
             "Give it the stream's captions (.srt, .vtt, or a pasted transcript) "
-            "and, optionally, the video or audio file itself."
+            "and, optionally, the video or audio file itself.  No captions? "
+            "Pass --audio alone and it works from sound."
         ),
     )
     parser.add_argument("--version", action="version", version=f"vod-moments {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     find = sub.add_parser("find", help="rank the best moments in a stream")
-    find.add_argument("transcript", help="captions file: .srt, .vtt, or pasted transcript text")
+    find.add_argument("transcript", nargs="?", default=None,
+                      help="captions file: .srt, .vtt, or pasted transcript text "
+                           "(optional when --audio is given)")
     find.add_argument("--audio", metavar="MEDIA", default=None,
                       help="video/audio file to scan for loud spikes too (needs ffmpeg)")
+    find.add_argument("--cut", metavar="DIR", nargs="?", const="clips", default=None,
+                      help="actually cut each moment into a clip file in DIR "
+                           "(default: clips; needs --audio)")
     find.add_argument("--top", type=int, default=10,
                       help="how many moments to list (default 10)")
     find.add_argument("--min-gap", type=float, default=60.0,
@@ -137,23 +154,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.min_gap < 0:
         print("error: --min-gap cannot be negative", file=sys.stderr)
         return 2
+    if args.transcript is None and args.audio is None:
+        print("error: give it a transcript file, or --audio with a video/audio "
+              "file (or both)", file=sys.stderr)
+        return 2
+    if args.cut is not None and args.audio is None:
+        print("error: --cut needs --audio — the video or audio file to cut "
+              "the clips from", file=sys.stderr)
+        return 2
 
-    try:
-        with open(args.transcript, encoding="utf-8", errors="replace") as handle:
-            raw = handle.read()
-    except OSError as exc:
-        print(f"error: cannot read {args.transcript}: {exc.strerror}", file=sys.stderr)
-        return 2
-    try:
-        segments, skipped = parse_transcript(raw, args.transcript)
-    except ParseError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+    segments: list = []
+    skipped = 0
+    if args.transcript is not None:
+        try:
+            with open(args.transcript, encoding="utf-8", errors="replace") as handle:
+                raw = handle.read()
+        except OSError as exc:
+            print(f"error: cannot read {args.transcript}: {exc.strerror}", file=sys.stderr)
+            return 2
+        try:
+            segments, skipped = parse_transcript(raw, args.transcript)
+        except ParseError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
 
     moments = find_transcript_moments(
         segments, top=args.top, min_gap=args.min_gap
     )
-    audio_duration: float | None = None
     if args.audio:
         try:
             audio_moments, audio_duration = find_audio_moments(
@@ -175,12 +202,31 @@ def main(argv: list[str] | None = None) -> int:
               "Try a longer transcript, or a lower --top.", file=sys.stderr)
         return 1
 
+    source = args.transcript or args.audio
+    if args.cut is not None:
+        try:
+            results = cut_clips(moments, args.audio, args.cut)
+        except CutError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        made = [r for r in results if r.ok]
+        for result in results:
+            if not result.ok:
+                print(f"warning: could not cut {result.path}: {result.error}",
+                      file=sys.stderr)
+        # stderr, not stdout: stdout is the machine-readable list when
+        # --format json/csv is used, and must stay clean.
+        print(f"Cut {len(made)} clip(s) into {args.cut}/", file=sys.stderr)
+        if not made:
+            print("warning: no clips were cut — the list below is timestamps only",
+                  file=sys.stderr)
+
     if args.format == "json":
-        output = render_json(moments, args.transcript)
+        output = render_json(moments, source)
     elif args.format == "csv":
         output = render_csv(moments)
     else:
-        output = render_text(moments, args.transcript, args.audio)
+        output = render_text(moments, source, args.audio)
 
     if args.out:
         try:
