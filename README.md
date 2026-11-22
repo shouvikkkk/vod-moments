@@ -39,6 +39,22 @@ Top moments in stream.srt (3 found)
 
 Each moment starts a few seconds before the funny bit (the setup) and ends a few seconds after it (the payoff). Take the timestamps straight into your editor.
 
+**No captions? Use sound alone.** Twitch and Kick VODs often have no caption file at all — that used to stop the tool cold. Now the transcript is optional: give it just the video and it works from sound.
+
+```bash
+python -m vodmoments find --audio stream.mp4
+```
+
+**Get the clips, not just the timestamps.** Add `--cut` and the tool cuts each moment out of the video for you, into a `clips/` folder — real files you can post, not commands to paste:
+
+```bash
+python -m vodmoments find --audio stream.mp4 --cut
+# Cut 3 clip(s) into clips/
+# clips/clip-000315.mp4  clips/clip-000555.mp4  clips/clip-000835.mp4
+```
+
+`--cut my-clips` picks a different folder. The clips keep the video's own format (`.mp4` in → `.mp4` out), and the cut is a fast stream copy — no re-encode, no quality loss.
+
 ## Find moments from sound too
 
 The captions catch jokes and shouted lines. They miss the moments where nobody is talking — a crash, a chase, a scream. If you have the video or audio file, add `--audio` and the tool listens as well:
@@ -63,7 +79,8 @@ ffmpeg -ss 00:03:15 -to 00:03:55 -i stream.mp4 -c copy clip-000315.mp4
 | `--format csv` | A spreadsheet of moments |
 | `--out moments.txt` | Save the list to a file instead of printing it |
 | `--hide-spoilers` | Leave out moments flagged as possible story beats |
-| `--audio FILE` | Also scan the video/audio for loud spikes |
+| `--audio FILE` | Also scan the video/audio for loud spikes; works alone, with no captions at all |
+| `--cut [DIR]` | Actually cut each moment into a clip file in DIR (default `clips/`; needs `--audio`) |
 
 Exit codes: `0` moments found, `1` the stream was quiet (no moments), `2` the transcript could not be read, `3` audio problem (ffmpeg missing or the media file unreadable).
 
@@ -76,8 +93,9 @@ Moments that mention story words (`ending`, `dies`, `betrayal`, `plot twist`) ar
 ## Honest limitations
 
 - **A spike is a candidate, not a guaranteed banger.** The tool finds where the stream got loud or funny-sounding; you still pick what to post. That is the whole point — it does the scrubbing, you do the taste.
-- **It is only as good as the captions.** Auto-captions mis-hear words, especially names and slang. The scorer uses families of words, not exact phrases, so one mis-hearing rarely kills a moment — but a stream with no captions at all needs the `--audio` mode.
+- **It is only as good as the captions.** Auto-captions mis-hear words, especially names and slang. The scorer uses families of words, not exact phrases, so one mis-hearing rarely kills a moment — but a stream with no captions at all runs on sound alone (`--audio` with no transcript).
 - **Audio mode needs ffmpeg**, and it reads the whole file once to decode it, so a 12-hour VOD takes a couple of minutes to scan. The transcript mode is instant.
+- **A `--cut` video clip starts on the nearest keyframe at or before the moment's start**, so it can begin a fraction of a second early — that is the price of a fast stream copy with no re-encode. Audio cuts are exact. Trim the rough edge in your editor, as you would anyway.
 - **It does not download anything.** You bring the captions and the video; the tool never touches the network, your accounts, or any API.
 
 ## How it differs from the paid tools
@@ -88,19 +106,20 @@ Moments that mention story words (`ending`, `dies`, `betrayal`, `plot twist`) ar
 | Account / upload | None — runs on your computer | Account + upload your video |
 | Silent gameplay (crash, no talking) | Found by the audio spike detector | Transcript-first tools miss or refuse it |
 | Hinglish streams | Scored in English + Roman-script Hinglish | Varies |
-| Output | Timestamps + reasons + ffmpeg cut commands | Vertical clips, in their editor |
+| Output | Timestamps + reasons + real clip files (`--cut`) | Vertical clips, in their editor |
 
 ## For developers
 
 ```bash
-python -m unittest discover -s tests   # 43 tests, all green
+python -m unittest discover -s tests   # 58 tests, all green
 ```
 
 - `vodmoments/parse.py` — `.srt`, `.vtt` and pasted-transcript parsers (bad lines skipped, never fatal)
 - `vodmoments/score.py` — 30-second sliding-window transcript scorer + non-max suppression
 - `vodmoments/audio.py` — ffmpeg → WAV, streaming RMS/crest spike detector
 - `vodmoments/merge.py` — boosts moments both signals agree on
-- `vodmoments/cli.py` — `find` command, text/JSON/CSV output, exit codes
+- `vodmoments/cut.py` — cuts the ranked moments out of the media file (`-c copy`, no re-encode)
+- `vodmoments/cli.py` — `find` command, text/JSON/CSV output, audio-only mode, `--cut`, exit codes
 
 Try it on the included example: `python -m vodmoments find examples/gta6-stream.srt` — a made-up 7-minute GTA 6 stream with three planted moments (a laugh, a WASTED crash, a bridge jump).
 
