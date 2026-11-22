@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vod-moments"
-version = "0.1.0"
+version = "0.2.0"
 description = "Find the funny moments in a long GTA 6 stream without rewatching it — free, offline, from captions or sound"
 readme = "README.md"
 license = {text = "MIT"}
